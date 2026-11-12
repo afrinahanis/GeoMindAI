@@ -1,0 +1,5 @@
+name,time_ms
+timeslice_fault_01,800
+timeslice_fault_02,810
+timeslice_channel_01,850
+timeslice_overbank_01,850

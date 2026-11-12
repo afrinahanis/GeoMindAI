@@ -1,0 +1,20 @@
+{
+  "_comment": "Optional. Copy to <INTERP_DIR>/data_config.json. Every key is optional; the copilot auto-detects what it can.",
+  "coordinate_mode": "auto",
+  "shapefile_crs": "EPSG:4326",
+  "seismic_crs": "EPSG:XXXX  (optional: if given, lon/lat shapefiles are converted with pyproj instead of auto-calibration on the Fault CSV)",
+  "georef_method": "auto",
+  "fault_name_number": "twt_ms",
+  "polygon_name_number": "unknown   (one of: twt_ms, sample_index, twt_ms_plus_offset, unknown) - meaning of the number in folder names such as 0080_Channel_01",
+  "sample_rate_ms": 4,
+  "name_number_offset_ms": 0,
+  "x_offset": 0.0,
+  "y_offset": 0.0,
+  "horizon_time_unit": "auto",
+  "slice_time_start_ms": 800,
+  "slice_time_step_ms": 10,
+  "slice_times_ms": {
+    "timeslice_fault_01": 800,
+    "timeslice_channel_01": 850
+  }
+}

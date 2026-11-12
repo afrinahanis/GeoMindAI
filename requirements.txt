@@ -1,0 +1,15 @@
+lasio
+matplotlib
+numpy
+openai
+openpyxl
+pandas
+plotly>=5.20
+pyproj  # optional: lon/lat -> projected conversion when seismic_crs is given
+pyshp
+scikit-image
+scipy
+segyio
+streamlit
+streamlit>=1.40
+torch
