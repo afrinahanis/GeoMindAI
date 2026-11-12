@@ -15,7 +15,7 @@ def _lines(rings):
     return xs, ys
 
 
-def make(cat, focus=None, highlight=(), layers=("survey", "horizon", "polygons", "faults", "wells")):
+def make(cat, focus=None, highlight=(), layers=("survey", "horizon", "polygons", "faults", "wells"), targets=(), revision=0, zoom_to_results=True):
     """focus: item (zoom target) or None; highlight: ids drawn emphasised."""
     fig = go.Figure()
     hl = set(highlight) | ({focus["id"]} if focus else set())
@@ -43,14 +43,14 @@ def make(cat, focus=None, highlight=(), layers=("survey", "horizon", "polygons",
         if i.get("kind") == "polygon" and "polygons" in layers:
             if i["id"] in hl:
                 x, y = _lines(i["rings"])
-                col = C.CLS_COLOR.get(i["cls"], "#6a7fd1")
+                col = C.CLS_COLOR.get(i["cls"], "#00877e")
                 fig.add_trace(go.Scatter(x=x, y=y, mode="lines", fill="toself", fillcolor=_rgba(col, .45), line=dict(color=col, width=2.5), name=i["label"],
                                          hoverinfo="name", showlegend=False))
             else:
                 merged.setdefault(i["cls"], []).extend(i["rings"])
     for cls, rings in merged.items():
         x, y = _lines(rings)
-        col = C.CLS_COLOR.get(cls, "#6a7fd1")
+        col = C.CLS_COLOR.get(cls, "#00877e")
         fig.add_trace(go.Scatter(x=x, y=y, mode="lines", fill="toself", fillcolor=_rgba(col, .18 if not hl else .08), line=dict(color=_rgba(col, .7 if not hl else .35), width=1),
                                  name=cls, hoverinfo="name", showlegend=False))
     # faults
@@ -76,13 +76,23 @@ def make(cat, focus=None, highlight=(), layers=("survey", "horizon", "polygons",
                 fig.add_trace(go.Scatter(x=[w["bbox"][0] for w in grp], y=[w["bbox"][1] for w in grp], mode="markers+text", text=[w["label"] for w in grp], textposition="top center",
                                          marker=dict(size=16 if big else 10, color="#1b2b3a", symbol="diamond", line=dict(color="#fff", width=1.5), opacity=1 if (big or not hl) else .5),
                                          hovertext=[w["label"] for w in grp], hoverinfo="text", showlegend=False))
+    # Structured results are points; no invented boundary or extent.
+    if targets:
+        fig.add_trace(go.Scatter(x=[p["x"] for p in targets], y=[p["y"] for p in targets],
+                                 text=[p["label"] for p in targets], mode="markers+text", textposition="top center",
+                                 marker=dict(size=18, color="#00877e", symbol="circle-open", line=dict(width=3)),
+                                 name="Copilot result", hovertemplate="%{text}<br>X %{x}<br>Y %{y}<extra></extra>"))
     # window
     win = C.focus_box(focus, survey) if focus else (C._pad(survey, 0.06) if survey else None)
-    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="#e6f1fb", plot_bgcolor="#e6f1fb", dragmode="pan", showlegend=False,
-                      uirevision=(focus["id"] if focus else "all"), height=560, hoverlabel=dict(bgcolor="#fff"))
+    if targets and not focus and zoom_to_results:
+        a = np.array([[p["x"], p["y"]] for p in targets])
+        bounds = [a[:, 0].min(), a[:, 1].min(), a[:, 0].max(), a[:, 1].max()]
+        win = C.focus_box({"bbox": bounds}, survey)
+    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="#ffffff", plot_bgcolor="#f8fafb", dragmode="pan", showlegend=False,
+                      uirevision=f"{revision}:{focus['id'] if focus else 'all'}", height=560, hoverlabel=dict(bgcolor="#fff"))
     ax = dict(showgrid=True, gridcolor="rgba(120,150,180,.25)", zeroline=False, showticklabels=True, tickfont=dict(size=10, color="#6b7c8d"), ticks="")
-    fig.update_xaxes(**ax)
-    fig.update_yaxes(**ax, scaleanchor="x", scaleratio=1)
+    fig.update_xaxes(**ax, title="X · dataset coordinates")
+    fig.update_yaxes(**ax, title="Y · dataset coordinates", scaleanchor="x", scaleratio=1)
     if win:
         fig.update_xaxes(range=[win[0], win[2]])
         fig.update_yaxes(range=[win[1], win[3]])

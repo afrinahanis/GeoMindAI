@@ -21,7 +21,10 @@ def S():
 def init_state():
     ss = st.session_state
     ss.setdefault("page", "workspace")
-    ss.setdefault("chat_open", False)
+    ss.setdefault("map_targets", [])
+    ss.setdefault("map_revision", 0)
+    ss.setdefault("map_fit", False)
+    ss.setdefault("hidden_ids", [])
     ss.setdefault("focus", None)
     ss.setdefault("sel_ids", [])
     ss.setdefault("scope", "All project data")
@@ -104,30 +107,6 @@ def sidebar():
         if st.button("Chat history", icon=":material/chat_bubble_outline:", type="primary" if page == "history" else "secondary", key="nav_hist"):
             goto("history")
             st.rerun()
-        with st.expander("Data tools", icon=":material/tune:"):
-            import ingest
-            import interp_data as D
-            st.caption(f"Raw data: {'ingested' if ingest.cache_ready() else 'not ingested'}  \nInterpreted data: {'ingested' if D.interpreted_ready() else 'not ingested'}")
-            if st.button("Scan for new data", key="t_scan", help="Ingest only new or changed files"):
-                with st.spinner("Scanning ..."):
-                    do_scan()
-                st.rerun()
-            if st.button("Full re-ingest", key="t_full", help="Re-read every raw and interpreted file"):
-                with st.spinner("Re-ingesting everything (raw volumes can take several minutes) ..."):
-                    do_scan(force=True)
-                st.rerun()
-            if st.button("Show diagnostics", key="t_diag", help="Compact summary of what each interpreted file contains"):
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    try:
-                        D.diagnose()
-                    except Exception as e:
-                        print("diagnose failed:", e)
-                st.session_state["diag"] = buf.getvalue()
-            if st.session_state.get("diag"):
-                st.code(st.session_state["diag"], language="text")
-            if st.session_state.get("scan_msg"):
-                st.info(st.session_state["scan_msg"])
         st.divider()
         st.markdown('<div class="gm-recent">RECENT</div>', unsafe_allow_html=True)
         cs = CH.chats()
@@ -136,7 +115,8 @@ def sidebar():
             c1, c2 = st.columns([5, 1])
             if c1.button(cs[cid]["title"], key=f"rc_{cid}", type="primary" if cid == st.session_state.get("active_chat") else "secondary"):
                 st.session_state["active_chat"] = cid
-                goto("history")
+                CH.restore_map(cs[cid])
+                goto("workspace")
                 st.rerun()
             with c2.popover("", icon=":material/more_horiz:"):
                 new = st.text_input("Rename", value=cs[cid]["title"], key=f"rn_{cid}")
@@ -155,106 +135,106 @@ def sidebar():
             st.rerun()
 
 
-# ----------------------------------------------------------------- chat panel (workspace)
-def chat_panel(sel_labels):
-    cid, chat = CH.active()
-    with st.container(key="chat_panel"):
-        h1, h2, h3 = st.columns([6, 1.2, 1.2])
-        h1.markdown("### GeoMindAI")
-        h1.caption(chat["title"])
-        if h2.button("", icon=":material/open_in_full:", key="cp_expand", help="Open in Chat history"):
-            goto("history", chat_open=False)
-            st.rerun()
-        if h3.button("", icon=":material/close:", key="cp_close", help="Close"):
-            st.session_state["chat_open"] = False
-            st.rerun()
-        opts = CH.scope_labels(sel_labels)
-        if st.session_state["scope"] not in opts:
-            st.session_state["scope"] = opts[0]
-        st.selectbox("Chat scope", opts, key="scope")
-        st.caption("Connected workspace data only. Relevant evidence is retrieved per question; not every file is analysed.")
-        if st.button("New chat", icon=":material/add_comment:", key="cp_new"):
-            if chat["msgs"]:
-                st.session_state["active_chat"] = store.new_chat(CH.chats())
-            st.rerun()
-        box = st.container(height=340, border=False)
-        with box:
-            if not chat["msgs"]:
-                st.caption("Ask about all connected project data.")
-                for q in CH.QUICK:
-                    if st.button(q, key=f"cpq_{q}"):
-                        st.session_state["pending"] = q
-                        st.rerun()
-            for i, m in enumerate(chat["msgs"]):
-                CH.render(m, f"cp{i}")
-            if "_run" in st.session_state:
-                CH.finish_run(sel_labels)
-        CH.input_box("Ask about all project data..." if st.session_state["scope"].startswith("All") else "Ask about the selected data...", sel_labels)
-
-
-# ----------------------------------------------------------------- workspace
-def add_to_selection(i):
-    if i not in st.session_state["sel_ids"]:
-        st.session_state["sel_ids"] = st.session_state["sel_ids"] + [i]
-
-
-def remove_from_selection(i):
-    st.session_state["sel_ids"] = [x for x in st.session_state["sel_ids"] if x != i]
-
-
-def set_focus(i):
-    st.session_state["focus"] = i
+# ----------------------------------------------------------------- workspace helpers
+def new_conversation():
+    st.session_state["active_chat"] = store.new_chat(CH.chats())
+    st.session_state.pop("pending", None)
+    st.session_state.pop("_run", None)
+    st.session_state["map_targets"] = []
+    st.session_state["map_revision"] += 1
 
 
 def clear_focus():
+    st.session_state["map_fit"] = True
     st.session_state["focus"] = None
+    st.session_state["map_revision"] += 1
 
 
-def overview_panel(cat, focus):
-    with st.container(border=True):
-        if not focus:
-            st.markdown("#### Overview")
-            items = cat["items"]
-            if not items:
-                st.markdown('<div class="gm-note">No data connected yet. Set the data folders in Settings or use Add data.</div>', unsafe_allow_html=True)
-                return
-            g = pd.Series([i["group"] for i in items]).value_counts()
-            st.dataframe(pd.DataFrame({"Group": g.index, "Datasets": g.values}), hide_index=True, width="stretch")
-            st.markdown('<div class="gm-note">Select a dataset in the list to zoom the map to it and see its details.</div>', unsafe_allow_html=True)
-            for fam in ("raw", "interpreted"):
-                w = cat["warnings"][fam]
-                if w:
-                    with st.expander(f"{len(w)} {fam}-data warning(s)"):
-                        for x in w:
-                            st.write("-", x)
-            return
-        st.markdown(f'#### {focus["label"]}<span class="gm-badge">{focus["type"]}</span>', unsafe_allow_html=True)
-        t1, t2 = st.tabs(["Overview", "Sources"])
-        with t1:
-            if not focus.get("bbox"):
-                st.markdown('<div class="gm-note">No map location; this data can still be used in chat.</div>', unsafe_allow_html=True)
-            rows = C.overview_rows(focus)
-            import html
-            st.markdown('<table class="gm-tbl">' + "".join(f"<tr><td>{html.escape(str(k))}</td><td>{html.escape(str(v))}</td></tr>" for k, v in rows) + "</table>", unsafe_allow_html=True)
-            st.write("")
-            if focus["id"] in st.session_state["sel_ids"]:
-                st.button("Remove from selected data", key="ov_rm", on_click=remove_from_selection, args=(focus["id"],), width="stretch")
-            else:
-                st.button("Add to selected data", key="ov_add", on_click=add_to_selection, args=(focus["id"],), width="stretch", type="primary")
-            with st.expander("Dataset metadata"):
-                st.json(C.metadata(focus), expanded=False)
-        with t2:
-            st.markdown(f"**File**  \n`{focus.get('path') or 'n/a'}`")
-            if focus.get("time_source"):
-                st.markdown(f"**Time taken from**  \n{focus['time_source']}")
-            if focus.get("coord_mode"):
-                st.markdown(f"**Coordinates**  \n{focus['coord_mode']}")
-            if focus.get("kind") in ("fault", "polygon", "horizon"):
-                w = cat["warnings"]["interpreted"]
-                if w:
-                    with st.expander(f"{len(w)} interpreted-data warning(s)"):
-                        for x in w:
-                            st.write("-", x)
+def clear_highlight():
+    st.session_state["map_targets"] = []
+    clear_focus()
+
+
+def data_tools():
+    import interp_data as D
+    if st.button("Scan for new data", key="t_scan", width="stretch"):
+        with st.spinner("Scanning …"):
+            do_scan()
+        st.rerun()
+    if st.button("Full re-ingest", key="t_full", width="stretch"):
+        with st.spinner("Reading project data …"):
+            do_scan(force=True)
+        st.rerun()
+    if st.button("Show diagnostics", key="t_diag", width="stretch"):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            try:
+                D.diagnose()
+            except Exception as e:
+                print(e)
+        st.session_state["diag"] = buf.getvalue()
+    if st.session_state.get("diag"):
+        st.code(st.session_state["diag"], language="text")
+
+
+@st.dialog("Dataset details", width="large")
+def dataset_details(item):
+    st.subheader(item["label"])
+    st.dataframe(pd.DataFrame(C.overview_rows(item), columns=["Property", "Value"]).astype(str),
+                 hide_index=True, width="stretch")
+    if item.get("path"):
+        st.caption("Source")
+        st.code(item["path"], language="text")
+    with st.expander("Metadata"):
+        st.json(C.metadata(item))
+    if item.get("bbox") and st.button("Locate dataset", icon=":material/location_on:"):
+        st.session_state["focus"] = item["id"]
+        st.session_state["map_fit"] = False
+        st.session_state["map_revision"] += 1
+        st.rerun()
+
+
+def chat_panel(sel_labels, full=False):
+    cid, chat = CH.active()
+    with st.container(border=False, key="chat_panel"):
+        heading, new, expand = st.columns([6, 1, 1])
+        heading.markdown("### Copilot")
+        if new.button("", icon=":material/add:", key="cp_new", help="New conversation"):
+            new_conversation()
+            st.rerun()
+        if expand.button("", icon=":material/close_fullscreen:" if full else ":material/open_in_full:",
+                         key="cp_expand", help="Return to workspace" if full else "Expand conversation"):
+            goto("workspace" if full else "history")
+            st.rerun()
+        # Context is independent of layer visibility.
+        opts = ["All project data", "Choose datasets…"]
+        st.session_state.setdefault("context_mode", opts[0])
+        mode = st.selectbox("Question context", opts, key="context_mode", label_visibility="collapsed")
+        cat = C.build()
+        by_id = {i["id"]: i for i in cat["items"]}
+        ids = [i for i in st.session_state.get("sel_ids", []) if i in by_id]
+        st.session_state["sel_ids"] = ids
+        if mode == opts[1]:
+            ids = st.multiselect("Focus datasets", list(by_id), key="sel_ids", format_func=lambda i: by_id[i]["label"])
+            st.caption("Focus hint for the answer; map visibility is separate.")
+        selected = [by_id[i]["label"] for i in ids] if mode == opts[1] else []
+        st.session_state["scope"] = "Selected data" if selected else "All project data"
+        with st.container(height=520 if not full else 600, border=False, key="conversation"):
+            if not chat["msgs"]:
+                st.markdown("#### What would you like to investigate?")
+                st.caption("Ask about the seismic, wells or interpretations. Locations appear on the map; new plots appear here.")
+                if not cat["items"]:
+                    st.caption("Connect data using Add data or Settings to start a conversation.")
+                for q in CH.QUICK:
+                    if st.button(q, key=f"cpq_{q}", width="stretch", disabled=not cat["items"]):
+                        st.session_state["pending"] = q
+                        st.rerun()
+            for i, m in enumerate(chat["msgs"]):
+                CH.render(m, f"{cid}_{i}")
+            if "_run" in st.session_state:
+                CH.finish_run(selected)
+        CH.input_box("Ask a follow-up…" if chat["msgs"] else "Ask about your project…", selected,
+                     disabled=not bool(cat["items"]))
 
 
 def workspace():
@@ -262,117 +242,85 @@ def workspace():
     items = cat["items"]
     by_id = {i["id"]: i for i in items}
     focus = by_id.get(st.session_state["focus"])
-    sel_ids = [i for i in st.session_state["sel_ids"] if i in by_id]
-    st.session_state["sel_ids"] = sel_ids
-    sel_labels = [by_id[i]["label"] for i in sel_ids]
-
-    t, b1, b2, b3 = st.columns([5, 1.6, 1.6, 0.6])
-    t.markdown(f'<span class="gm-h1">Workspace</span><span class="gm-chip">{"Connected project" if items else "No data connected"}</span>', unsafe_allow_html=True)
-    b1.button("Fit to data", icon=":material/center_focus_strong:", key="fit", on_click=clear_focus, width="stretch")
-    if b2.button("Add data", icon=":material/add:", key="add_data", width="stretch"):
+    t, fit, add = st.columns([6, 1.7, 1.5], vertical_alignment="center")
+    t.markdown('<div class="gm-h1">Workspace</div><div class="gm-muted">Project data and interpretation</div>', unsafe_allow_html=True)
+    fit.button("Fit to data", icon=":material/center_focus_strong:", key="fit", on_click=clear_focus, width="stretch")
+    if add.button("Add data", icon=":material/add:", key="add_data", type="primary", width="stretch"):
         add_data_dialog()
-    with b3.popover("", icon=":material/tune:"):
-        st.caption("Map layers")
-        st.multiselect("Layers", ["survey", "horizon", "polygons", "faults", "wells"], key="layers", label_visibility="collapsed")
-
     if raw_changed():
-        st.markdown('<div class="gm-warn">Raw data in the raw folder is new or changed since the last ingestion.</div>', unsafe_allow_html=True)
-        if st.button("Ingest raw data now", key="raw_now"):
-            with st.spinner("Ingesting raw data (can take several minutes) ..."):
+        st.info("Raw files have changed. Use Project data → ⋯ → Scan for new data, then ingest raw data.")
+        if st.button("Ingest raw data now"):
+            with st.spinner("Reading raw data …"):
                 do_scan(raw=True)
             st.rerun()
     if st.session_state.get("scan_msg"):
         st.caption(st.session_state["scan_msg"])
-
-    chat_open = st.session_state["chat_open"]
-    c_list, c_map, c_right = st.columns([1.25, 2.5, 1.6] if chat_open else [1.25, 2.7, 1.5], gap="medium")
-
+    c_list, c_map, c_chat = st.columns([1.05, 2.8, 2.05], gap="small")
     with c_list:
-        with st.container(border=True):
-            st.markdown("#### Available data")
-            q = st.text_input("Search datasets", key="ds_q", placeholder="Search datasets", label_visibility="collapsed").lower().strip()
-            with st.container(height=470, border=False, key="dslist"):
+        with st.container(border=False, key="project_data"):
+            title, menu = st.columns([5, 1])
+            title.markdown("### Project data")
+            with menu.popover("", icon=":material/more_horiz:", help="Data tools"):
+                data_tools()
+            q = st.text_input("Search datasets", key="ds_q", placeholder="Search datasets…", label_visibility="collapsed").lower().strip()
+            with st.container(height=570, border=False, key="dslist"):
                 if not items:
-                    st.caption("Nothing ingested yet.")
+                    st.caption("No data connected")
+                    if st.button("Set data folders", key="empty_settings", width="stretch"):
+                        goto("settings")
+                        st.rerun()
+                hidden = set(st.session_state["hidden_ids"])
                 for grp in ("Seismic volumes", "Wells", "Interpretations"):
-                    g = [i for i in items if i["group"] == grp and (not q or q in i["label"].lower() or q in i["type"].lower())]
-                    if not g:
+                    group = [i for i in items if i["group"] == grp and (not q or q in i["label"].lower() or q in i["type"].lower())]
+                    if not group:
                         continue
-                    with st.expander(f"{grp} ({len(g)})", expanded=(grp == "Interpretations" or len(g) <= 8)):
-                        last = None
-                        for i in g:
-                            if grp == "Interpretations" and i["sub"] != last:
-                                st.caption(i["sub"])
-                                last = i["sub"]
-                            st.button(i["label"], key=f"ds_{i['id']}", icon=":material/description:", on_click=set_focus, args=(i["id"],),
-                                      type="primary" if i["id"] == st.session_state["focus"] else "secondary", width="stretch")
-
+                    name = "Seismic" if grp == "Seismic volumes" else grp
+                    with st.expander(f"{name} ({len(group)})", expanded=True):
+                        for item in group:
+                            check, label = st.columns([1, 6], gap="small", vertical_alignment="center")
+                            visible = check.checkbox("Show " + item["label"], value=item["id"] not in hidden,
+                                                     key="visible_" + item["id"], label_visibility="collapsed")
+                            if visible:
+                                hidden.discard(item["id"])
+                            else:
+                                hidden.add(item["id"])
+                            if label.button(item["label"], key="ds_" + item["id"], help="Dataset details", width="stretch"):
+                                dataset_details(item)
+                st.session_state["hidden_ids"] = sorted(hidden)
+            st.caption("Checkbox: map visibility · Name: details")
+            warnings = cat.get("warnings", {})
+            if any(warnings.values()):
+                with st.expander("Data warnings"):
+                    for family, messages in warnings.items():
+                        for message in messages:
+                            st.write(f"{family}: {message}")
     with c_map:
-        with st.container(border=True):
-            if not items:
-                st.markdown("<div style='height:520px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#e6f1fb;border-radius:10px'>"
-                            "<div style='font-size:1.4rem;font-weight:700'>Connect data to build your workspace</div>"
-                            "<div class='gm-muted'>Add data or set the data folders in Settings.</div></div>", unsafe_allow_html=True)
+        with st.container(border=False, key="main_map"):
+            st.markdown("### Map")
+            targets = st.session_state.get("map_targets", [])
+            if targets:
+                text, clear = st.columns([5, 1.5])
+                text.caption("Showing: " + ", ".join(p["label"] for p in targets[:3]))
+                clear.button("Clear", key="clear_map", on_click=clear_highlight)
             else:
-                st.plotly_chart(mapview.make(cat, focus, sel_ids, layers=tuple(st.session_state["layers"])), width="stretch", key="map",
-                                config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToRemove": ["select2d", "lasso2d"]})
-                st.caption("Map shows every dataset; pick one in the list to zoom to it. Scroll to zoom, drag to pan.")
-
-    with c_right:
-        if chat_open:
-            chat_panel(sel_labels)
-        else:
-            overview_panel(cat, focus)
-
-    with st.container(border=True):
-        st.markdown("**Selected data**")
-        st.multiselect("Selected data", options=list(by_id), format_func=lambda i: by_id[i]["label"], key="sel_ids", placeholder="Choose data from the list or here",
-                       label_visibility="collapsed")
-
-    if not chat_open:
-        if st.button("", icon=":material/chat:", key="chat_fab", help="Open GeoMindAI chat"):
-            st.session_state["chat_open"] = True
-            st.rerun()
+                st.caption("Project layers and answer locations")
+            visible_cat = {**cat, "items": [i for i in items if i["id"] not in st.session_state["hidden_ids"]]}
+            if items:
+                fig = mapview.make(visible_cat, focus, targets=targets, revision=st.session_state["map_revision"], zoom_to_results=not st.session_state["map_fit"])
+                st.plotly_chart(fig, width="stretch", key="map", config={"scrollZoom": True, "displaylogo": False})
+                st.caption("Scroll to zoom · Drag to pan")
+            else:
+                st.markdown('<div class="gm-map-empty"><b>Your project map</b><p>Connect seismic, wells or interpreted data<br>to explore their locations here.</p></div>', unsafe_allow_html=True)
+    with c_chat:
+        chat_panel([])
 
 
-# ----------------------------------------------------------------- chat history page
 def history():
-    cat = C.build()
-    by_id = {i["id"]: i for i in cat["items"]}
-    sel_labels = [by_id[i]["label"] for i in st.session_state["sel_ids"] if i in by_id]
-    cid, chat = CH.active()
-    left, mid, right = st.columns([1, 3.2, 1])
-    with mid:
-        opts = CH.scope_labels(sel_labels)
-        if st.session_state["scope"] not in opts:
-            st.session_state["scope"] = opts[0]
-        st.selectbox("Chat scope", opts, key="scope")
-        st.caption("Connected workspace data only. Relevant evidence is retrieved per question; not every file is analysed.")
-        t, d = st.columns([5, 1.3])
-        t.markdown(f"### {chat['title']}")
-        if d.button("Data", icon=":material/folder_open:", key="h_data", width="stretch"):
-            goto("workspace", chat_open=False)
-            st.rerun()
-        st.divider()
-        if not chat["msgs"]:
-            st.markdown('<div class="gm-hero"><h1>What would you like to explore?</h1><p>Connect data. Investigate evidence. Ask the next question.</p></div>', unsafe_allow_html=True)
-            with st.container(key="hero_cards"):
-                cols = st.columns(3)
-                for col, (name, icon) in zip(cols, (("Explore data", ":material/layers:"), ("Investigate a well", ":material/explore:"), ("Examine seismic", ":material/waves:"))):
-                    if col.button(name, icon=icon, key=f"hero_{name}", width="stretch", type="primary" if st.session_state["hero"] == name else "secondary"):
-                        st.session_state["hero"] = name
-                        st.rerun()
-            if st.session_state["hero"]:
-                st.markdown(f"<div class='gm-sec' style='margin-top:1rem'>{st.session_state['hero']}</div>", unsafe_allow_html=True)
-                for q in CH.HERO[st.session_state["hero"]]:
-                    if st.button(q, key=f"hq_{q}", width="stretch"):
-                        st.session_state["pending"] = q
-                        st.rerun()
-        for i, m in enumerate(chat["msgs"]):
-            CH.render(m, f"h{i}")
-        if "_run" in st.session_state:
-            CH.finish_run(sel_labels)
-    CH.input_box("Ask a question or attach a file...", sel_labels)
+    st.markdown('<div class="gm-h1">Chat history</div>', unsafe_allow_html=True)
+    if st.button("Back to workspace", icon=":material/arrow_back:"):
+        goto("workspace")
+        st.rerun()
+    chat_panel([], full=True)
 
 
 # ----------------------------------------------------------------- settings page
@@ -417,7 +365,7 @@ def settings_page():
         st.session_state["settings"] = new
         store.apply_settings(new)
         refresh_catalog()
-        st.success("Saved. Use Data tools > Scan for new data (or Full re-ingest after changing a folder) to read the data.")
+        st.success("Saved. Use Project data → ⋯ → Scan for new data (or Full re-ingest after changing a folder) to read the data.")
 
     with st.container(border=True):
         st.markdown("#### Coordinates and time slices (interpreted data)")
@@ -497,6 +445,6 @@ def add_data_dialog():
                 do_scan(raw=(fam == "Raw"))
             st.session_state["scan_msg"] = f"Uploaded {len(files)} file(s). " + st.session_state.get("scan_msg", "")
         else:
-            st.session_state["scan_msg"] = f"Uploaded {len(files)} file(s). Run Data tools > Scan for new data to read them."
+            st.session_state["scan_msg"] = f"Uploaded {len(files)} file(s). Run Project data → ⋯ → Scan for new data to read them."
         refresh_catalog()
         st.rerun()
