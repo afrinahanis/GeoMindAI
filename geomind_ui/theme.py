@@ -1,6 +1,5 @@
 """Shared GeoMindAI typography, controls and layout styling.
 
-Replace geomind_ui/theme.py. Existing page layout and Python callbacks are kept.
 BFA palette: blue #006CB5, green #00A68C, dark green #007C73.
 """
 import streamlit as st
@@ -326,3 +325,4 @@ def brand():
         '<span>Beicip-Franlab Asia</span></div></div>',
         unsafe_allow_html=True,
     )
+
