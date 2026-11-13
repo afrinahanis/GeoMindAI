@@ -87,8 +87,7 @@ def load_chats():
 def save_chats(chats):
     slim = {}
     for cid, c in chats.items():
-        if not c["msgs"]:
-            continue
+        # Retain empty conversations created with New chat.
         msgs = []
         for m in c["msgs"]:
             m = dict(m)
