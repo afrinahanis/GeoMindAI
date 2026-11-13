@@ -37,8 +37,8 @@ RULES
 - Inversion volumes are cropped; check that wells actually sit inside them.
 - Prefer 2-5 tool calls, then answer. Call render_slice only when a picture helps; you can look at the image.
 
-ANSWER FORMAT (for interpretive questions) - ALWAYS COMMIT TO A SUGGESTION
-1. SUGGESTED ANSWER: one sentence naming your best-supported option (e.g. "Combined trap: ..."), with confidence (low / low-medium / medium / high). Never answer only "it depends" or "cannot be determined": if evidence is thin, still name the best-supported option and say it is weak.
+ANSWER FORMAT (for interpretive questions)
+1. ASSESSMENT: state the best-supported interpretation and its confidence when evidence supports a comparison. When the evidence is missing, contradictory or too weak to distinguish the options, explicitly state "Insufficient evidence to determine the trap type" and identify the missing evidence. Do not force a preferred option or treat a tool screening score as a confirmed conclusion.
 2. WHY (reasoning chain): numbered steps, each "observation (with the number and its source tool) -> what it implies". Use the tool's reasoning_chain when present; mark each step supports / contradicts / risk.
 3. WHY NOT THE OTHERS: for each other option, the evidence that disfavours it, or NOT AVAILABLE if the data cannot test it.
 4. WHERE TO LOOK: inline, xline, TWT of the prospect(s) and the nearest well.
@@ -55,7 +55,7 @@ RAW vs INTERPRETED DATA (see DATASET below for what is loaded; it can change whe
 - If interpreted evidence and raw evidence disagree, report the disagreement; do not hide it.
 
 DIRECT QUESTION MAP (call these first; do not ask the user for a window)
-- "identify / what type of trap / structural vs stratigraphic vs combined / is it a trap / where to drill" (with or without a window like 2000-2300 ms) -> recommend_trap(twt_min_ms, twt_max_ms) FIRST: it returns a committed suggested answer and reasoning chain from interpreted + raw data. Then optionally rank_prospects, interpreted_facies, horizon_structure for detail. Pass the user's window as numbers in ms.
+- "identify / what type of trap / structural vs stratigraphic vs combined / is it a trap / where to drill" (with or without a window like 2000-2300 ms) -> recommend_trap(twt_min_ms, twt_max_ms) FIRST: it returns a screening suggestion and reasoning chain from interpreted + raw data. Evaluate its evidence and caveats; do not repeat a recommendation that the available evidence cannot support. Then optionally rank_prospects, interpreted_facies, horizon_structure for detail. Pass the user's window as numbers in ms.
 - "time slice with high variation of sand probability / make the map" -> high_variation_slices
 - "define the depositional environment / geological pattern from sand probability" -> depositional_pattern (leave the window empty: it picks the highest-variation slice) and explain the metrics
 - "how many faults" -> if list_datasets / DATASET shows interpreted faults (shapefiles or Fault CSV), call interpreted_faults FIRST and report THAT number as the answer (the interpreter's faults, linked across time slices). Automatic detection (ai_fault_detection) is only a cross-check and never replaces it. If NO interpreted faults are loaded, use ai_fault_detection (3D U-Net; falls back to coherence and says which ran), report the number, list each with strike, length, location, time range, and say they are automatic candidates. Never call faults found along the survey boundary real.
@@ -184,14 +184,12 @@ def _img_msg(path, label):
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}]}
 
 
-def _enforce(ans, final_md):
-    """Guarantee a committed, evidence-based answer: if a tool wrote one (answer_markdown) and the model's reply does not state it, use the tool's."""
-    if not final_md:
-        return ans
-    has_commit = final_md["key"] and final_md["key"][:25].lower() in ans.lower()
-    if has_commit and len(ans) > 300:
-        return ans
-    return final_md["md"] + (("\n\n---\n" + ans) if (ans and len(ans) > 300 and "image" not in ans.lower()[:80]) else "")
+def _finalize_answer(answer):
+    """Preserve qualifications and insufficient-evidence conclusions."""
+    return answer.strip() or (
+        "I could not produce a supported conclusion from the available evidence. "
+        "Please review the recorded tool results and missing data before interpreting this result."
+    )
 
 
 def suggest_followups(question, answer, trace, history):
@@ -262,12 +260,12 @@ def run(history, user_text, max_rounds=6):
     """history: [{'role','content'}...] of earlier plain turns. Returns {'answer','trace','images'}."""
     messages = [{"role": "system", "content": build_system()}] + list(history) + \
                [{"role": "user", "content": user_text}]
-    trace, images, final_md = [], [], None
+    trace, images = [], []
     for rnd in range(max_rounds):
         text, calls = _chat(messages)
         if not calls:
             ans = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
-            return _answer_result(_enforce(ans, final_md), trace, images, user_text, history)
+            return _answer_result(_finalize_answer(ans), trace, images, user_text, history)
         if NATIVE_TOOLS and calls[0][0] != "json0":
             messages.append({"role": "assistant", "content": text, "tool_calls": [
                 {"id": i, "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
@@ -278,8 +276,6 @@ def run(history, user_text, max_rounds=6):
         new_images = []
         for cid, name, args in calls:
             res = _run_tool(name, args)
-            if isinstance(res, dict) and res.get("answer_markdown"):
-                final_md = {"md": res["answer_markdown"], "key": str(res.get("suggested_answer", ""))[:40]}
             trace.append({"round": rnd + 1, "tool": name, "args": args, "result": res})
             payload = json.dumps(res, default=str)[:9000]
             if NATIVE_TOOLS and cid != "json0":
@@ -294,9 +290,10 @@ def run(history, user_text, max_rounds=6):
         for p, label in new_images:
             messages.append(_img_msg(p, label))
         messages.append({"role": "user", "content": "Use the tool result(s) above. If you still need evidence, call another tool; otherwise write the FINAL ANSWER now in the required format "
-                                                    "(SUGGESTED ANSWER first, then WHY with numbered reasoning from the data, WHY NOT THE OTHERS, WHERE TO LOOK, WHAT WOULD CHANGE MY MIND, NEXT STEPS). "
+                                                    "(ASSESSMENT first, allowing insufficient evidence when appropriate, then WHY with numbered reasoning from the data, WHY NOT THE OTHERS, WHERE TO LOOK, WHAT WOULD CHANGE MY MIND, NEXT STEPS). "
                                                     "Do not just describe the picture."})
     messages.append({"role": "user", "content": "Give your final answer now using the evidence gathered."})
     r = client.chat.completions.create(model=MODEL, messages=messages, temperature=0.2, max_tokens=2000)
-    return _answer_result(_enforce((r.choices[0].message.content or "").strip(), final_md), trace, images, user_text, history)
+    return _answer_result(_finalize_answer((r.choices[0].message.content or "").strip()), trace, images, user_text, history)
+
 

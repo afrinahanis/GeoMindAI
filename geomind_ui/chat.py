@@ -1,4 +1,4 @@
-"""Chat engine glue (calls the existing agent unchanged) and message rendering."""
+"""Chat execution, conversation persistence and message rendering."""
 import time
 
 import pandas as pd
@@ -124,4 +124,5 @@ def input_box(placeholder, selected_labels):
     if q:
         ask_agent(q, selected_labels)
         st.rerun()
+
 

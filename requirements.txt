@@ -10,6 +10,6 @@ pyshp
 scikit-image
 scipy
 segyio
-streamlit
-streamlit>=1.40
 torch
+
+streamlit>=1.50,<2
