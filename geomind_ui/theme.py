@@ -190,9 +190,67 @@ section[data-testid="stSidebar"] .st-key-sidebar_recent button[kind="primary"] {
 :is([data-testid="stChatMessageAvatarUser"], [data-testid="stChatMessageAvatarAssistant"]) {
     width: 28px; height: 28px; flex-shrink: 0;
 }
-[data-testid="stChatInput"] { border: 1px solid #CFDAE3; border-radius: .625rem; background: white; }
-[data-testid="stChatInput"] textarea { font-size: var(--gm-body); }
-[data-testid="stChatInputSubmitButton"] { color: var(--blue); }
+/* One clean composer outline; no rectangular focus box inside it. */
+[data-testid="stChatInput"] {
+    border: 1px solid #CFDAE3 !important;
+    border-radius: .75rem !important;
+    background: #FFFFFF !important;
+    box-shadow: none !important;
+    padding: .375rem .5rem;
+}
+[data-testid="stChatInput"]:focus-within {
+    border-color: var(--blue) !important;
+    box-shadow: 0 0 0 1px var(--blue) !important;
+}
+[data-testid="stChatInput"] [data-baseweb="textarea"],
+[data-testid="stChatInput"] [data-baseweb="textarea"]:focus-within,
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] textarea:focus,
+[data-testid="stChatInput"] textarea:focus-visible {
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+}
+[data-testid="stChatInput"] textarea {
+    font-size: var(--gm-body);
+    color: var(--ink);
+    caret-color: var(--blue);
+}
+[data-testid="stChatInput"] textarea::placeholder { color: var(--muted); opacity: 1; }
+/* The send icon stays visible against the solid blue button. */
+[data-testid="stChatInput"] button[data-testid="stChatInputSubmitButton"] {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 2.125rem;
+    height: 2.125rem;
+    min-width: 2.125rem;
+    padding: .375rem !important;
+    border: 0 !important;
+    border-radius: .5rem !important;
+    background: var(--blue) !important;
+    color: #FFFFFF !important;
+    box-shadow: none !important;
+}
+[data-testid="stChatInputSubmitButton"]:hover:not(:disabled) { background: #005B99 !important; }
+[data-testid="stChatInputSubmitButton"]:disabled { opacity: .4; }
+[data-testid="stChatInputSubmitButton"] svg {
+    display: block !important;
+    visibility: visible !important;
+    width: 1.25rem !important;
+    height: 1.25rem !important;
+    color: #FFFFFF !important;
+    fill: currentColor !important;
+    opacity: 1 !important;
+}
+[data-testid="stChatInputSubmitButton"] [data-testid="stIconMaterial"] {
+    color: #FFFFFF !important;
+    font-size: 1.25rem !important;
+    opacity: 1 !important;
+}
 /* Expanded chat: one centred reading column, with the same toolbar. */
 .st-key-expanded_chat { max-width: 1040px; width: 100%; margin-inline: auto; }
 .st-key-expanded_chat .st-key-chat_panel { border: 0; background: transparent; padding: 0; }
@@ -227,6 +285,33 @@ table.gm-tbl td:first-child { width: 40%; color: var(--muted); }
     :is(.st-key-project_data, .st-key-main_map, .st-key-chat_panel) { padding: .75rem; }
     .gm-map-empty { height: 350px; }
 }
+/* Follow-up suggestions beneath the latest Chat answer. */
+[class*="st-key-followups_"] { margin-top: .5rem; }
+[class*="st-key-followups_"] [data-testid="stVerticalBlock"] { gap: .375rem; }
+[class*="st-key-followups_"] .stButton > button {
+    min-height: 2rem;
+    padding: .45rem .65rem;
+    border: 1px solid #E2E8EE;
+    border-radius: .5rem;
+    background: #FFFFFF;
+    color: #31536D;
+    justify-content: flex-start;
+    text-align: left;
+    box-shadow: none;
+}
+[class*="st-key-followups_"] .stButton > button p {
+    font-size: .8125rem;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    white-space: normal;
+}
+[class*="st-key-followups_"] .stButton > button:hover {
+    background: #F1F7FC;
+    color: #006CB5;
+    border-color: #BED8EB;
+}
+
 </style>
 '''
 

@@ -46,6 +46,7 @@ def ask_agent(q, selected_labels):
     text = q
     if st.session_state.get("scope", "All project data").startswith("Selected") and selected_labels:
         text = f"{q}\n\n(Focus on these datasets if relevant: {', '.join(selected_labels)}.)"
+    st.session_state.pop("pending", None)
     chat["msgs"].append({"role": "user", "content": q, "t": time.time()})
     if chat["title"] == "New chat":
         chat["title"] = (q[:46] + "...") if len(q) > 48 else q
@@ -65,7 +66,7 @@ def finish_run(selected_labels):
                 out = agent.run(history, text)
             except Exception as e:
                 out = {"answer": f"Something went wrong while answering: `{e}`", "trace": [], "images": []}
-    chat["msgs"].append({"role": "assistant", "content": out["answer"], "trace": out["trace"], "images": out["images"], "t": time.time()})
+    chat["msgs"].append({"role": "assistant", "content": out["answer"], "trace": out["trace"], "images": out["images"], "suggestions": out.get("suggestions", []), "t": time.time()})
     store.save_chats(chats())
     st.rerun()
 
@@ -96,7 +97,26 @@ def render(m, key):
                 for t in m["trace"]:
                     st.markdown(f"**{t['round']}. `{t['tool']}`** `{t['args']}`")
                     st.json(t["result"], expanded=False)
+        render_followups(m, key)
 
+
+def render_followups(m, key):
+    """Offer suggestions only for the latest completed answer in the active chat."""
+    if m.get("role") != "assistant" or not m.get("suggestions"):
+        return
+    _, chat = active()
+    if not chat["msgs"] or chat["msgs"][-1] is not m:
+        return
+    if "_run" in st.session_state or st.session_state.get("pending"):
+        return
+    with st.container(key=f"followups_{key}"):
+        st.caption("Continue exploring")
+        for index, question in enumerate(m["suggestions"][:3]):
+            if not isinstance(question, str):
+                continue
+            if st.button(question, key=f"followup_{key}_{index}", width="stretch"):
+                st.session_state["pending"] = question
+                st.rerun()
 
 def input_box(placeholder, selected_labels):
     q = st.chat_input(placeholder, key=f"ci_{st.session_state.get('page')}")
@@ -104,3 +124,4 @@ def input_box(placeholder, selected_labels):
     if q:
         ask_agent(q, selected_labels)
         st.rerun()
+

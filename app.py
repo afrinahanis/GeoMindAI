@@ -4,9 +4,11 @@ app.py - GeoMindAI web application (Streamlit).   Run:  streamlit run app.py
 UI only. All analysis is done by the existing modules (agent.py, tools.py, ingest*.py, interp*.py), unchanged.
 The previous single-page chat UI is kept as app_classic.py.
 """
+from pathlib import Path
+
 import streamlit as st
 
-st.set_page_config(page_title="GeoMindAI", page_icon="🌊", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="GeoMindAI", page_icon=str(Path(__file__).resolve().parent / "geomind_ui" / "assets" / "favicon.png"), layout="wide", initial_sidebar_state="expanded")
 
 from geomind_ui import theme, views  # noqa: E402
 
@@ -21,3 +23,4 @@ elif page == "history":
     views.history()
 else:
     views.workspace()
+
